@@ -169,7 +169,11 @@ class AnthropicRSSGenerator:
         feed.link(href=self.base_url, rel='alternate')
         feed.description('Latest engineering posts from Anthropic')
         feed.language('en')
-        feed.logo('https://www.anthropic.com/images/icons/apple-touch-icon.png')
+        feed.image(
+            url='https://www.anthropic.com/images/icons/apple-touch-icon.png',
+            title='Anthropic Engineering Blog',
+            link=self.base_url
+        )
 
         # Add atom:link with rel="self" for better interoperability
         # This should be updated to match your actual GitHub Pages URL
