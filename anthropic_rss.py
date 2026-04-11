@@ -29,6 +29,60 @@ class AnthropicRSSGenerator:
             # Return current date as fallback with UTC timezone
             return datetime.now(timezone.utc)
 
+    def fix_relative_urls(self, html):
+        """Convert relative URLs to absolute URLs"""
+        # Fix src attributes (images)
+        html = re.sub(
+            r'src="(/[^"]*)"',
+            r'src="https://www.anthropic.com\1"',
+            html
+        )
+        # Fix srcset attributes
+        html = re.sub(
+            r'(srcset="[^"]*?)(/(?:_next|images)/[^",\s]*)',
+            lambda m: m.group(1) + 'https://www.anthropic.com' + m.group(2),
+            html
+        )
+        # Fix href attributes
+        html = re.sub(
+            r'href="(/[^"]*)"',
+            r'href="https://www.anthropic.com\1"',
+            html
+        )
+        return html
+
+    async def fetch_article_content(self, context, url):
+        """Fetch the full HTML content of an individual article"""
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until='domcontentloaded')
+
+            # Skip pages that redirect to external domains
+            if not page.url.startswith('https://www.anthropic.com'):
+                print(f"  Skipped (redirected to {page.url})")
+                return None
+
+            # Try the standard blog post body selector
+            try:
+                await page.wait_for_selector("div[class*='Body-module'][class*='body']", timeout=10000)
+                body = await page.query_selector("div[class*='Body-module'][class*='body']")
+            except Exception:
+                body = None
+
+            # Fallback: try article tag content
+            if not body:
+                body = await page.query_selector("article")
+
+            if body:
+                html = await body.inner_html()
+                return self.fix_relative_urls(html)
+            return None
+        except Exception as e:
+            print(f"  Error fetching content from {url}: {e}")
+            return None
+        finally:
+            await page.close()
+
     async def fetch_posts(self):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -90,6 +144,21 @@ class AnthropicRSSGenerator:
             # Sort articles by date (newest first)
             articles_data.sort(key=lambda x: x['date'], reverse=True)
 
+            # Fetch full article content concurrently (batch of 5 at a time)
+            print(f"\nFetching full content for {len(articles_data)} articles...")
+            batch_size = 5
+            for i in range(0, len(articles_data), batch_size):
+                batch = articles_data[i:i + batch_size]
+                tasks = [
+                    self.fetch_article_content(context, article['url'])
+                    for article in batch
+                ]
+                results = await asyncio.gather(*tasks)
+                for article, content in zip(batch, results):
+                    article['content'] = content
+                    status = f"{len(content)} chars" if content else "failed"
+                    print(f"  Fetched: {article['title']} ({status})")
+
             await browser.close()
             return articles_data
 
@@ -100,7 +169,8 @@ class AnthropicRSSGenerator:
         feed.link(href=self.base_url, rel='alternate')
         feed.description('Latest engineering posts from Anthropic')
         feed.language('en')
-        
+        feed.logo('https://www.anthropic.com/images/icons/apple-touch-icon.png')
+
         # Add atom:link with rel="self" for better interoperability
         # This should be updated to match your actual GitHub Pages URL
         feed.link(href='https://raw.githubusercontent.com/jarrettpickel/anthropic-engineering-rss-feed/main/anthropic_engineering_rss.xml', rel='self')
@@ -116,7 +186,7 @@ class AnthropicRSSGenerator:
             entry.title(article_data['title'])
             entry.link(href=article_data['url'])
             entry.pubDate(article_data['date'])
-            entry.description(article_data['title'])
+            entry.description(article_data.get('content') or article_data['title'])
             
             # Add GUID for better interoperability (using the URL as GUID)
             entry.guid(article_data['url'], permalink=True)
