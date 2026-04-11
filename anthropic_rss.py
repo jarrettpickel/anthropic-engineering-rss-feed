@@ -166,7 +166,6 @@ class AnthropicRSSGenerator:
         """Create a fresh feed instance"""
         feed = FeedGenerator()
         feed.title('Anthropic Engineering Blog')
-        feed.link(href=self.base_url, rel='alternate', replace=True)
         feed.description('Latest engineering posts from Anthropic')
         feed.language('en')
         feed.image(
@@ -175,9 +174,10 @@ class AnthropicRSSGenerator:
             link=self.base_url
         )
 
-        # Add atom:link with rel="self" for better interoperability
-        # This should be updated to match your actual GitHub Pages URL
-        feed.link(href='https://raw.githubusercontent.com/jarrettpickel/anthropic-engineering-rss-feed/main/anthropic_engineering_rss.xml', rel='self', replace=False)
+        # Order matters: feedgen uses the last-appended link for the RSS
+        # channel <link>, so the self link must be added before the alternate.
+        feed.link(href='https://raw.githubusercontent.com/jarrettpickel/anthropic-engineering-rss-feed/main/anthropic_engineering_rss.xml', rel='self', replace=True)
+        feed.link(href=self.base_url, rel='alternate', replace=False)
         
         return feed
 
