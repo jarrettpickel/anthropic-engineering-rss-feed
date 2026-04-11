@@ -31,51 +31,65 @@ class AnthropicRSSGenerator:
 
     async def fetch_posts(self):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(self.base_url)
-            
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = await context.new_page()
+            await page.goto(self.base_url, wait_until='domcontentloaded')
+
             # Wait for articles to be loaded using wildcard selector
-            await page.wait_for_selector("div[class*='ArticleList_articles__']")
-            
+            await page.wait_for_selector("article[class*='ArticleList']")
+
             # Get all article elements using wildcard selector
-            articles = await page.query_selector_all("div[class*='ArticleList_articles__'] > div > article")
-            
+            articles = await page.query_selector_all("article[class*='ArticleList']")
+
             # Store articles data for sorting
             articles_data = []
-            
+
             for article in articles:
                 try:
-                    # Get title using wildcard selector
-                    title_element = await article.query_selector("a > div[class*='ArticleList_content__'] > h3")
+                    # Get title (featured articles use h2, others use h3)
+                    title_element = await article.query_selector("h2, h3")
                     title = await title_element.text_content()
-                    
+
                     # Get URL
                     link_element = await article.query_selector("a")
                     url = await link_element.get_attribute("href")
                     if not url.startswith('http'):
                         url = f"https://www.anthropic.com{url}"
-                    
-                    # Get date using wildcard selector
-                    date_element = await article.query_selector("a > div[class*='ArticleList_content__'] > div")
-                    date_text = await date_element.text_content()
-                    parsed_date = self.parse_date(date_text)
-                    
+
+                    # Get date using wildcard selector (some articles may not have dates)
+                    date_element = await article.query_selector("div[class*='date']")
+                    if date_element:
+                        date_text = await date_element.text_content()
+                    else:
+                        date_text = None
+
+                    if date_text:
+                        parsed_date = self.parse_date(date_text)
+                    else:
+                        parsed_date = datetime.now(timezone.utc)
+                        date_text = "Unknown"
+
                     articles_data.append({
                         'title': title,
                         'url': url,
                         'date': parsed_date,
                         'date_text': date_text
                     })
-                    
+
                     print(f"Found: {title} - {date_text}")
-                    
+
                 except Exception as e:
                     print(f"Error processing article: {e}")
-            
+
             # Sort articles by date (newest first)
             articles_data.sort(key=lambda x: x['date'], reverse=True)
-            
+
             await browser.close()
             return articles_data
 
